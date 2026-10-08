@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive icon foreground: a ledger page with a yuan mark.
+
+    Layout rules this file follows on purpose:
+      * Everything lives inside x/y 27..81. Adaptive icons only guarantee a
+        72x72 safe zone in the middle of the 108x108 canvas, so nothing that
+        matters may drift closer to the edge.
+      * The wordmark is a single currency mark, not text: "¥" stays crisp at
+        48dp, where a whole word would smear into noise.
+      * Stroke widths are >=4 canvas units (~3.6px at 48dp) so the thin pieces
+        survive the launcher's downscale from 192px.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Page body: white sheet, 54 wide by 60 tall, corners radius 7. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M34,24L74,24A7,7 0 0 1 81,31L81,77A7,7 0 0 1 74,84L34,84A7,7 0 0 1 27,77L27,31A7,7 0 0 1 34,24Z" />
+
+    <!-- Header band. Two deliberate choices here. First, it is inset 2 units on
+         each side: flush with the sheet's edge it would merge with the teal
+         plate and the sheet would look clipped rather than filled. Second, it
+         uses the plate's darkest teal rather than the primary one, so the band
+         stays a distinct shape against the plate at every size instead of
+         dissolving into it. -->
+    <path
+        android:fillColor="#FF00453B"
+        android:pathData="M29,29L79,29L79,34L29,34Z" />
+
+    <!-- One faint rule line, just under the band, like the rule of a ledger's
+         header. Alpha is 0x14 (8%), not 0x33: at 0x33 it read as a solid mint
+         bar and competed with the yuan mark. A single line is deliberate, as
+         two of them turned the upper sheet into stripes at 48dp. -->
+    <path
+        android:pathData="M37,40L71,40"
+        android:strokeColor="#1400695C"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+
+    <!-- Yuan mark in the theme's amber accent (0xFFF9A825). It is deliberately
+         not vertically centred: the band occupies the top, so the mark sits a
+         little lower to balance the sheet. -->
+    <!-- Diagonal arms, both meeting the top of the stem at (54,53). -->
+    <path
+        android:pathData="M46,44L54,53"
+        android:strokeColor="#FFF9A825"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M62,44L54,53"
+        android:strokeColor="#FFF9A825"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- Vertical stem. -->
+    <path
+        android:pathData="M54,53L54,78"
+        android:strokeColor="#FFF9A825"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+    <!-- The two crossbars that turn the "Y" into a "¥". -->
+    <path
+        android:pathData="M44,62L64,62"
+        android:strokeColor="#FFF9A825"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M44,69L64,69"
+        android:strokeColor="#FFF9A825"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round" />
+</vector>

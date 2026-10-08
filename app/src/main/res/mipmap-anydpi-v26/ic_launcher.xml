@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Launcher icon as a pure adaptive icon: no raster fallback is needed because
+    this app's minSdk is 29, which is already past the API 26 adaptive-icon
+    cutoff. Before this, mipmap-*/ic_launcher.webp still carried the stock
+    Android Studio robot.
+
+    The same <adaptive-icon> serves both ic_launcher and ic_launcher_round: on
+    API 26+ the launcher applies its own mask (circle on Pixel, squircle on
+    Samsung, and so on), so shipping the identical resource under both names is
+    what keeps a round-masked device from drawing a square icon.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>

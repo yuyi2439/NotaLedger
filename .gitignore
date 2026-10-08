@@ -1,0 +1,17 @@
+*.iml
+.gradle
+.kotlin
+.idea
+/local.properties
+
+
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+# Signing secrets must never be committed.
+keystore.properties
+# Local scratch tooling: the offline icon previewer and a workspace-local
+# Gradle distribution. Not part of the app.
+/.build-tools/
