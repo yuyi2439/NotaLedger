@@ -12,7 +12,12 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.filled.Settings
+import cn.yausen.notaledger.ui.screens.SettingsScreen
+import cn.yausen.notaledger.capture.DraftStore
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -36,10 +41,11 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
     Ledger("ledger", "账本", Icons.AutoMirrored.Filled.ReceiptLong),
     Stats("stats", "统计", Icons.Filled.BarChart),
     Categories("categories", "分类", Icons.Filled.Category),
+    Settings("settings", "设置", Icons.Filled.Settings),
 }
 
 object Routes {
-    const val ADD = "add?editId={editId}"
+    const val ADD = "add?editId={editId}&draftId={draftId}"
     const val HOME = "ledger"
     const val STATS = "stats"
     const val CATEGORIES = "categories"
@@ -51,11 +57,29 @@ object Routes {
 fun NotaLedgerRoot(
     repository: LedgerRepository,
     preferences: UserPreferences,
+    captureRequest: String? = null,
+    onCaptureConsumed: () -> Unit = {},
+    openSettings: Boolean = false,
+    onSettingsConsumed: () -> Unit = {},
     navController: NavHostController = rememberNavController(),
 ) {
+    // Root-owned instance keeps month and budget identical across both tabs.
+    val ledgerViewModel: LedgerViewModel = viewModel(
+        factory = LedgerViewModelFactory(repository, preferences),
+    )
+    LaunchedEffect(captureRequest, openSettings) {
+        if (openSettings) {
+            navController.navigate("settings") { launchSingleTop = true }
+            onSettingsConsumed()
+        }
+        captureRequest?.let { request ->
+            navController.navigate("add?draftId=${android.net.Uri.encode(request)}")
+            onCaptureConsumed()
+        }
+    }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val showBottomBar = currentRoute in setOf(Tab.Ledger.route, Tab.Stats.route, Tab.Categories.route)
+    val showBottomBar = currentRoute in Tab.entries.map { it.route }.toSet()
 
     Scaffold(
         bottomBar = {
@@ -93,22 +117,18 @@ fun NotaLedgerRoot(
                 .consumeWindowInsets(innerPadding),
         ) {
             composable(Tab.Ledger.route) {
-                val vm: LedgerViewModel = viewModel(
-                    factory = LedgerViewModelFactory(repository, preferences),
-                )
                 HomeScreen(
-                    viewModel = vm,
+                    viewModel = ledgerViewModel,
                     onAddTransaction = { navController.navigate(Routes.add()) },
                     onEditTransaction = { id -> navController.navigate(Routes.add(id)) },
                 )
             }
 
             composable(Tab.Stats.route) {
-                val vm: LedgerViewModel = viewModel(
-                    factory = LedgerViewModelFactory(repository, preferences),
-                )
-                StatsScreen(viewModel = vm)
+                StatsScreen(viewModel = ledgerViewModel)
             }
+
+            composable(Tab.Settings.route) { SettingsScreen(preferences) }
 
             composable(Tab.Categories.route) {
                 val vm: CategoryViewModel = viewModel(
@@ -120,6 +140,7 @@ fun NotaLedgerRoot(
             composable(
                 route = Routes.ADD,
                 arguments = listOf(
+                    navArgument("draftId") { type = NavType.StringType; defaultValue = "" },
                     navArgument("editId") {
                         type = NavType.LongType
                         defaultValue = -1L
@@ -127,12 +148,15 @@ fun NotaLedgerRoot(
                 ),
             ) { entry ->
                 val editId = entry.arguments?.getLong("editId")?.takeIf { it >= 0L }
+                val draftId = entry.arguments?.getString("draftId").orEmpty()
+                val context = LocalContext.current
+                val draft = androidx.compose.runtime.remember(entry) { DraftStore.get(context, draftId) }
                 val vm: AddEditViewModel = viewModel(
-                    factory = AddEditViewModelFactory(repository, editId),
+                    factory = AddEditViewModelFactory(repository, editId, draft),
                 )
                 AddEditScreen(
                     viewModel = vm,
-                    onDone = { navController.popBackStack() },
+                    onDone = { DraftStore.remove(context, draftId); navController.popBackStack() },
                 )
             }
         }

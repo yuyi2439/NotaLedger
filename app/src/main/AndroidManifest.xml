@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application
         android:name=".NotaLedgerApp"
         android:allowBackup="true"
@@ -13,6 +18,19 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.NotaLedger"
         tools:targetApi="31">
+
+        <service android:name=".capture.PaymentNotificationListener"
+            android:exported="true" android:label="通知捕获快捷记账"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <service android:name=".capture.ForegroundReminderService"
+            android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled foreground payment app detection for manual bookkeeping reminders; no screen content access" />
+        </service>
 
         <activity
             android:name=".MainActivity"

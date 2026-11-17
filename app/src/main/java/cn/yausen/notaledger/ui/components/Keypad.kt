@@ -271,6 +271,13 @@ fun AmountDisplay(
  * The amount being typed: the yuan in full size with the `.fen` tail one size
  * smaller, which keeps the leading digits reading first without shrinking the
  * decimals into an illegible smear. A bare zero stays muted.
+ *
+ * The two halves flow left to right inside this `Row`, so the `.fen` tail lands
+ * after the yuan. Emitting them as siblings into the caller's `Box` stacked them
+ * instead: both started at the same x, and the tail was painted on top of the
+ * yuan the moment a point was typed. They share one baseline — not a top-aligned
+ * row with a nudge — because a smaller figure on the same baseline is what makes
+ * `12.5` read as one number rather than as a raised footnote.
  */
 @Composable
 private fun EntryFigure(text: String, accent: Color) {
@@ -283,22 +290,25 @@ private fun EntryFigure(text: String, accent: Color) {
         accent
     }
 
-    Text(
-        text = whole,
-        style = MaterialTheme.typography.headlineMedium,
-        fontWeight = FontWeight.Bold,
-        color = color,
-        maxLines = 1,
-    )
-    if (fraction.isNotEmpty()) {
+    Row {
         Text(
-            text = fraction,
-            style = MaterialTheme.typography.headlineSmall,
+            text = whole,
+            style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             color = color,
             maxLines = 1,
-            modifier = Modifier.padding(top = 2.dp),
+            modifier = Modifier.alignByBaseline(),
         )
+        if (fraction.isNotEmpty()) {
+            Text(
+                text = fraction,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = color,
+                maxLines = 1,
+                modifier = Modifier.alignByBaseline(),
+            )
+        }
     }
 }
 

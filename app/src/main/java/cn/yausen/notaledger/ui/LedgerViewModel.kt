@@ -8,12 +8,16 @@ import androidx.lifecycle.viewModelScope
 import cn.yausen.notaledger.NotaLedgerApp
 import cn.yausen.notaledger.data.Category
 import cn.yausen.notaledger.data.CategoryTotal
+import cn.yausen.notaledger.data.CategoryUsage
 import cn.yausen.notaledger.data.DailyTotal
 import cn.yausen.notaledger.data.Kind
 import cn.yausen.notaledger.data.LedgerRepository
 import cn.yausen.notaledger.data.MonthSummary
+import cn.yausen.notaledger.data.Money
+import kotlinx.coroutines.CancellationException
 import cn.yausen.notaledger.data.Transaction
 import cn.yausen.notaledger.data.UserPreferences
+import cn.yausen.notaledger.data.indexedById
 import cn.yausen.notaledger.util.Dates
 import cn.yausen.notaledger.util.withDayOf
 import cn.yausen.notaledger.util.withTimeOf
@@ -31,8 +35,18 @@ import kotlinx.coroutines.launch
 data class LedgerRow(
     val transaction: Transaction,
     val category: Category?,
+    /** The parent of a sub-category; null for a top-level category and for 未分类. */
+    val parent: Category? = null,
 ) {
     val kind: Kind get() = Kind.fromCode(transaction.kind)
+
+    /** A top-level category reads as its own name, a sub-category as 一级-二级. */
+    val categoryLabel: String
+        get() = when {
+            category == null -> "未分类"
+            parent == null -> category.name
+            else -> "${parent.name}-${category.name}"
+        }
 }
 
 /** Everything the home screen shows for the selected month. */
@@ -40,6 +54,8 @@ data class HomeUiState(
     val month: YearMonth = Dates.currentMonth(),
     val summary: MonthSummary = MonthSummary(),
     val rows: List<LedgerRow> = emptyList(),
+    /** Every category, so the statistics screen can name a sub-category's parent. */
+    val categories: List<Category> = emptyList(),
     val isLoaded: Boolean = false,
 )
 
@@ -92,11 +108,22 @@ class LedgerViewModel(
             repository.observeSummary(target),
             repository.observeCategories(),
         ) { transactions, summary, categories ->
-            val byId = categories.associateBy { it.id }
+            val byId = categories.indexedById()
             HomeUiState(
                 month = target,
                 summary = summary,
-                rows = transactions.map { LedgerRow(it, byId[it.categoryId]) },
+                rows = transactions.map { transaction ->
+                    val category = byId[transaction.categoryId]
+                    LedgerRow(
+                        transaction = transaction,
+                        category = category,
+                        // Resolved once here so every row can name its own level
+                        // without the screens having to look the parent up again.
+                        parent = category?.takeIf { !it.isTopLevel }
+                            ?.let { byId[it.parentId] },
+                    )
+                },
+                categories = categories,
                 isLoaded = true,
             )
         }
@@ -184,11 +211,14 @@ data class TransactionForm(
 class AddEditViewModel(
     private val repository: LedgerRepository,
     private val editingId: Long?,
+    private val draft: cn.yausen.notaledger.capture.PaymentDraft? = null,
 ) : ViewModel() {
 
-    private val form = MutableStateFlow(TransactionForm())
+    private val form = MutableStateFlow(draft?.let { TransactionForm(amount = it.amount, note = it.merchant, dateMillis = it.timestamp) } ?: TransactionForm())
     private val categoriesState = MutableStateFlow<List<Category>>(emptyList())
     private val readyState = MutableStateFlow(editingId == null)
+    private val savingState = MutableStateFlow(false)
+    val isSaving: StateFlow<Boolean> = savingState
 
     val formState: StateFlow<TransactionForm> = form
     val categories: StateFlow<List<Category>> = categoriesState
@@ -197,6 +227,7 @@ class AddEditViewModel(
     val isReady: StateFlow<Boolean> = readyState
 
     val isEditing: Boolean get() = editingId != null
+    val isCapturedDraft: Boolean get() = editingId == null && draft != null
 
     init {
         viewModelScope.launch {
@@ -248,22 +279,37 @@ class AddEditViewModel(
     }
 
     fun save(onSaved: () -> Unit, onError: (String) -> Unit) {
+        if (!readyState.value || savingState.value) return
         val current = form.value
+        val cents = runCatching { Money.toCents(current.amount) }.getOrNull()
         when {
-            current.amount <= 0.0 -> onError("请输入有效的金额")
+            cents == null || cents <= 0L -> onError("请输入有效的金额，金额不能超出支持范围")
             current.categoryId == null -> onError("请选择一个分类")
-            else -> viewModelScope.launch {
-                val record = Transaction(
-                    id = editingId ?: 0L,
-                    amount = current.amount,
-                    kind = current.kind.code,
-                    categoryId = current.categoryId,
-                    note = current.note.trim(),
-                    timestamp = current.dateMillis,
-                )
-                if (editingId == null) repository.addTransaction(record)
-                else repository.updateTransaction(record)
-                onSaved()
+            else -> {
+                if (!savingState.compareAndSet(false, true)) return
+                viewModelScope.launch {
+                    try {
+                        val record = Transaction(
+                            id = editingId ?: 0L,
+                            amountCents = cents,
+                            kind = current.kind.code,
+                            categoryId = current.categoryId,
+                            note = current.note.trim(),
+                            timestamp = current.dateMillis,
+                        )
+                        if (editingId == null) repository.addTransaction(record)
+                        else repository.updateTransaction(record)
+                    } catch (cancelled: CancellationException) {
+                        savingState.value = false
+                        throw cancelled
+                    } catch (_: Exception) {
+                        savingState.value = false
+                        onError("保存失败，内容已保留，请重试并检查分类是否仍然存在")
+                        return@launch
+                    }
+                    // Keep submissions locked after success until navigation removes this form.
+                    onSaved()
+                }
             }
         }
     }
@@ -277,55 +323,156 @@ class AddEditViewModel(
     }
 }
 
+/**
+ * One filled-in category editor form. The icon and the name travel together
+ * because a built-in preset describes a category as exactly that pair.
+ */
+data class CategoryDraft(
+    val name: String,
+    val kind: Kind,
+    val icon: Int,
+    val colorIndex: Int,
+    /** [Category.ROOT] keeps it top-level; any other id nests it one level down. */
+    val parentId: Long = Category.ROOT,
+)
+
 /** Category management state. */
 class CategoryViewModel(private val repository: LedgerRepository) : ViewModel() {
 
     val categories: StateFlow<List<Category>> = repository.observeCategories()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun add(name: String, kind: Kind, icon: Int, colorIndex: Int, onError: (String) -> Unit) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) {
+    init {
+        viewModelScope.launch { repository.seedDefaultsIfNeeded() }
+    }
+
+    /** Creates a category. On failure [onError] leaves the editor open to correct it. */
+    fun add(draft: CategoryDraft, onError: (String) -> Unit, onDone: () -> Unit) {
+        val name = draft.name.trim()
+        if (name.isEmpty()) {
             onError("请输入分类名称")
             return
         }
         viewModelScope.launch {
-            val existing = repository.currentCategories()
-            if (existing.any { it.kind == kind.code && it.name == trimmed }) {
-                onError("已有同名分类")
+            val all = repository.currentCategories()
+            val problem = problemWith(draft.copy(name = name), all, moving = null)
+            if (problem != null) {
+                onError(problem)
                 return@launch
             }
             repository.addCategory(
                 Category(
-                    name = trimmed,
-                    kind = kind.code,
-                    icon = icon,
-                    colorIndex = colorIndex,
-                    builtIn = false,
-                    sortOrder = existing.count { it.kind == kind.code },
+                    name = name,
+                    kind = draft.kind.code,
+                    icon = draft.icon,
+                    colorIndex = draft.colorIndex,
+                    parentId = draft.parentId,
+                    isDefault = false,
+                    // Lands at the end of its level, next to its own siblings.
+                    sortOrder = all.count {
+                        it.kind == draft.kind.code && it.parentId == draft.parentId
+                    },
                 ),
             )
+            onDone()
         }
     }
 
-    fun rename(category: Category, name: String, icon: Int, colorIndex: Int) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) return
+    /** Saves an edit, including a move between the two levels. */
+    fun update(
+        category: Category,
+        draft: CategoryDraft,
+        onError: (String) -> Unit,
+        onDone: () -> Unit,
+    ) {
+        // The kind is not editable: the records already filed under this category
+        // were signed by it, so changing it would leave them on the wrong side.
+        val wanted = draft.copy(kind = Kind.fromCode(category.kind))
+        val name = wanted.name.trim()
+        if (name.isEmpty()) {
+            onError("请输入分类名称")
+            return
+        }
         viewModelScope.launch {
-            repository.updateCategory(category.copy(name = trimmed, icon = icon, colorIndex = colorIndex))
+            val all = repository.currentCategories()
+            val problem = problemWith(wanted.copy(name = name), all, moving = category)
+            if (problem != null) {
+                onError(problem)
+                return@launch
+            }
+            val moved = category.parentId != wanted.parentId
+            repository.updateCategory(
+                category.copy(
+                    name = name,
+                    icon = wanted.icon,
+                    colorIndex = wanted.colorIndex,
+                    parentId = wanted.parentId,
+                    sortOrder = if (moved) {
+                        all.count { it.kind == category.kind && it.parentId == wanted.parentId }
+                    } else {
+                        category.sortOrder
+                    },
+                ),
+            )
+            onDone()
         }
     }
 
+    /**
+     * The rules a category list has to keep: a sub-category needs a top-level parent
+     * of its own kind, a category that has children cannot itself become one, and
+     * names stay unique among siblings. Returns the reason, or null when it is fine.
+     */
+    private fun problemWith(draft: CategoryDraft, all: List<Category>, moving: Category?): String? {
+        if (draft.parentId != Category.ROOT) {
+            val parent = all.firstOrNull { it.id == draft.parentId }
+            if (parent == null || !parent.isTopLevel) {
+                return "父分类不存在，二级分类只能挂在某个一级分类下"
+            }
+            if (parent.id == moving?.id) return "分类不能挂在自己下面"
+            if (parent.kind != draft.kind.code) return "二级分类要和父分类同属支出或收入"
+            if (moving != null) {
+                val children = all.count { it.parentId == moving.id }
+                if (children > 0) {
+                    return "「${moving.name}」下面还有 $children 个二级分类，" +
+                        "先处理它们再把它变成二级分类"
+                }
+            }
+        }
+        val clash = all.any {
+            it.id != moving?.id && it.kind == draft.kind.code &&
+                it.parentId == draft.parentId && it.name == draft.name
+        }
+        return if (clash) "同级下已有同名分类" else null
+    }
+
+    /** Reads a category's subtree before the screen asks to confirm a delete. */
+    fun inspect(category: Category, onResult: (CategoryUsage) -> Unit) {
+        viewModelScope.launch { onResult(repository.usageOf(category)) }
+    }
+
+    /**
+     * Removes a category. Records anywhere in its subtree block the delete, because
+     * those rows would otherwise point at a category that no longer exists.
+     */
     fun delete(category: Category, onBlocked: (String) -> Unit) {
         viewModelScope.launch {
-            val used = repository.usageCount(category.id)
-            if (used > 0) {
-                onBlocked("该分类下还有 $used 笔记录，先移除记录再删除分类")
-            } else {
-                repository.deleteCategory(category)
+            val usage = repository.usageOf(category)
+            if (!usage.isDeletable) onBlocked(blockedMessage(category, usage))
+            else if (!repository.deleteCategoryTree(category)) {
+                onBlocked("该分类下新增了记录，请先迁移或处理记录后再删除分类")
             }
         }
     }
+
+    /** Why a category cannot go, phrased for the level it sits at. */
+    fun blockedMessage(category: Category, usage: CategoryUsage): String =
+        if (usage.childCount > 0) {
+            "「${category.name}」和它的 ${usage.childCount} 个二级分类下还有 " +
+                "${usage.recordCount} 笔记录，先移除记录再删除分类"
+        } else {
+            "该分类下还有 ${usage.recordCount} 笔记录，先移除记录再删除分类"
+        }
 }
 
 class LedgerViewModelFactory(
@@ -340,10 +487,11 @@ class LedgerViewModelFactory(
 class AddEditViewModelFactory(
     private val repository: LedgerRepository,
     private val editingId: Long?,
+    private val draft: cn.yausen.notaledger.capture.PaymentDraft? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        AddEditViewModel(repository, editingId) as T
+        AddEditViewModel(repository, editingId, draft) as T
 }
 
 class CategoryViewModelFactory(private val repository: LedgerRepository) :

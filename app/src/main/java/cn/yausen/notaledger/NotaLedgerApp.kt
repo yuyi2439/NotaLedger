@@ -14,7 +14,7 @@ class NotaLedgerApp : Application() {
 
     val database: AppDatabase by lazy { AppDatabase.get(this) }
 
-    val repository: LedgerRepository by lazy { LedgerRepository(database) }
+    val repository: LedgerRepository by lazy { LedgerRepository(database, preferences) }
 
     val preferences: UserPreferences by lazy { UserPreferences(this) }
 }

@@ -153,6 +153,20 @@ object CategoryIcons {
     /** Ids in the order they are offered in the picker. */
     val allIds: List<Int> = entries.map { it.id }
 
+    /** One built-in icon together with the name it stands for. */
+    data class Preset(val id: Int, val name: String)
+
+    /**
+     * The built-in set a category can be made from: an icon and a name kept
+     * together, so choosing one already describes a category. Each preset works as
+     * a top-level category or as a sub-category, and the user may rename it or swap
+     * the icon afterwards.
+     */
+    val presets: List<Preset> = entries.map { Preset(it.id, it.label) }
+
+    /** The name that belongs to an icon id; empty when the id is unknown. */
+    fun nameOf(id: Int): String = entries.firstOrNull { it.id == id }?.label.orEmpty()
+
     /** Seeds reference icons by name; these ids are the contract with stored data. */
     const val RESTAURANT = 1
     const val DIRECTIONS_BUS = 10

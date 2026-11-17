@@ -68,8 +68,9 @@ fun BudgetDialog(
                     return@TextButton
                 }
                 val value = Money.parse(text)
-                if (value == null || value <= 0.0) {
-                    error = "请输入大于 0 的金额"
+                val cents = value?.let { runCatching { cn.yausen.notaledger.data.Money.toCents(it) }.getOrNull() }
+                if (cents == null || cents <= 0L) {
+                    error = "请输入大于 0 且未超出支持范围的金额"
                 } else {
                     onConfirm(value)
                 }

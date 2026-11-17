@@ -10,15 +10,30 @@ import java.time.YearMonth
  */
 class UserPreferences(context: Context) {
 
+    private val capturePrefs = context.applicationContext.getSharedPreferences("capture-settings", Context.MODE_PRIVATE)
+
+    var notificationCaptureEnabled: Boolean
+        get() = capturePrefs.getBoolean("notification_capture", false)
+        set(value) = capturePrefs.edit().putBoolean("notification_capture", value).apply()
+
+    var foregroundReminderEnabled: Boolean
+        get() = capturePrefs.getBoolean("foreground_reminder", false)
+        set(value) = capturePrefs.edit().putBoolean("foreground_reminder", value).apply()
+
     private val prefs = context.applicationContext
         .getSharedPreferences("notaledger-settings", Context.MODE_PRIVATE)
 
     /** Monthly spending budget in yuan; null means the user has not set one. */
     var monthlyBudget: Double?
-        get() = if (prefs.contains(KEY_BUDGET)) prefs.getFloat(KEY_BUDGET, 0f).toDouble() else null
+        get() = when {
+            prefs.contains(KEY_BUDGET_CENTS) -> prefs.getLong(KEY_BUDGET_CENTS, 0L) / 100.0
+            prefs.contains(KEY_BUDGET) -> Money.toCents(prefs.getFloat(KEY_BUDGET, 0f).toString().toDouble()) / 100.0
+            else -> null
+        }
         set(value) {
             prefs.edit().apply {
-                if (value == null) remove(KEY_BUDGET) else putFloat(KEY_BUDGET, value.toFloat())
+                remove(KEY_BUDGET)
+                if (value == null) remove(KEY_BUDGET_CENTS) else putLong(KEY_BUDGET_CENTS, Money.toCents(value))
             }.apply()
         }
 
@@ -37,9 +52,20 @@ class UserPreferences(context: Context) {
         }
         set(value) = prefs.edit().putString(KEY_MONTH, value?.toString()).apply()
 
+    /**
+     * Whether the default categories have already been written. This is a stored
+     * flag rather than a "the table is empty" check because those categories are
+     * deletable now: a user who clears them out must not find them back next launch.
+     */
+    var categoriesSeeded: Boolean
+        get() = prefs.getBoolean(KEY_SEEDED, false)
+        set(value) = prefs.edit().putBoolean(KEY_SEEDED, value).apply()
+
     private companion object {
         const val KEY_BUDGET = "monthly_budget"
+        const val KEY_BUDGET_CENTS = "monthly_budget_cents"
         const val KEY_WARN = "budget_warning"
         const val KEY_MONTH = "last_viewed_month"
+        const val KEY_SEEDED = "categories_seeded"
     }
 }

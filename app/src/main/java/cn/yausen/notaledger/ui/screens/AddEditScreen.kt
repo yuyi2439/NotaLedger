@@ -50,7 +50,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import cn.yausen.notaledger.data.Category
 import cn.yausen.notaledger.data.Kind
+import cn.yausen.notaledger.data.branchesOf
 import cn.yausen.notaledger.ui.AddEditViewModel
 import cn.yausen.notaledger.ui.components.AmountDisplay
 import cn.yausen.notaledger.ui.components.AmountKeypad
@@ -82,6 +84,7 @@ fun AddEditScreen(
     val form by viewModel.formState.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val ready by viewModel.isReady.collectAsState()
+    val saving by viewModel.isSaving.collectAsState()
 
     var error by remember { mutableStateOf<String?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -94,7 +97,15 @@ fun AddEditScreen(
 
     val isExpense = form.kind == Kind.EXPENSE
     val accent = if (isExpense) LedgerColors.expense else LedgerColors.income
-    val visibleCategories = categories.filter { it.kind == form.kind.code }
+
+    // The two levels of the picker. A top-level chip selects that category and also
+    // unfolds its sub-categories, so either level can be recorded. The unfolded one
+    // follows the selection unless the user opens another branch by hand.
+    var openParent by remember(form.kind) { mutableStateOf<Long?>(null) }
+    val branches = categories.branchesOf(form.kind)
+    val selectedCategory = categories.firstOrNull { it.id == form.categoryId }
+    val openId = openParent
+        ?: selectedCategory?.let { if (it.isTopLevel) it.id else it.parentId }
 
     LaunchedEffect(ready) {
         if (ready && !calcSeeded) {
@@ -122,7 +133,7 @@ fun AddEditScreen(
             TopAppBar(
                 title = { Text(if (viewModel.isEditing) "编辑记录" else "记一笔") },
                 navigationIcon = {
-                    IconButton(onClick = onDone) {
+                    IconButton(onClick = onDone, enabled = !saving) {
                         Icon(Icons.Filled.Close, contentDescription = "关闭")
                     }
                 },
@@ -138,6 +149,9 @@ fun AddEditScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (viewModel.isCapturedDraft) {
+                    Text("来自支付通知的待确认草稿，请核对金额、商户和时间，选择分类后手动保存。", style = MaterialTheme.typography.bodySmall)
+                }
                 KindSwitch(kind = form.kind, onSelect = viewModel::setKind)
 
                 error?.let {
@@ -149,29 +163,52 @@ fun AddEditScreen(
                 }
 
                 SectionHeader("分类")
-                if (visibleCategories.isEmpty()) {
+                if (branches.isEmpty()) {
                     Text(
                         text = "还没有${if (isExpense) "支出" else "收入"}分类，先到「分类」页添加一个。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    FlowRow(modifier = Modifier.fillMaxWidth()) {
-                        visibleCategories.forEach { category ->
-                            FilterChip(
-                                selected = form.categoryId == category.id,
-                                onClick = { viewModel.setCategory(category.id) },
-                                label = { Text(category.name) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = CategoryIcons.vectorAt(category.icon),
-                                        contentDescription = null,
-                                        tint = CategoryPalette.colorAt(category.colorIndex),
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                },
-                            )
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        branches.forEach { branch ->
+                            // One wrap row per top-level category: the parent chip
+                            // first, then its sub-categories once it is the open one.
+                            FlowRow(modifier = Modifier.fillMaxWidth()) {
+                                CategoryChip(
+                                    category = branch.parent,
+                                    label = branch.parent.name,
+                                    selected = form.categoryId == branch.parent.id,
+                                    onClick = {
+                                        openParent = branch.parent.id
+                                        viewModel.setCategory(branch.parent.id)
+                                    },
+                                )
+                                if (branch.parent.id == openId) {
+                                    branch.children.forEach { child ->
+                                        CategoryChip(
+                                            category = child,
+                                            // A sub-category always reads as
+                                            // 一级名称-二级名称, here included.
+                                            label = "${branch.parent.name}-${child.name}",
+                                            selected = form.categoryId == child.id,
+                                            onClick = { viewModel.setCategory(child.id) },
+                                        )
+                                    }
+                                }
+                            }
                         }
+                    }
+                    if (branches.any { it.children.isNotEmpty() }) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "点一级分类就记在一级上；它下面的二级分类会展开，选了就记得更细。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
 
@@ -251,7 +288,7 @@ fun AddEditScreen(
                                 )
                             }
                             AmountKeypad(
-                                enabled = ready,
+                                enabled = ready && !saving,
                                 keyHeight = rowHeight,
                                 onKey = { key ->
                                     when (key) {
@@ -338,4 +375,28 @@ private fun KindSwitch(kind: Kind, onSelect: (Kind) -> Unit) {
             )
         }
     }
+}
+
+/** One selectable category, at either level, wearing its own icon and colour. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryChip(
+    category: Category,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label) },
+        leadingIcon = {
+            Icon(
+                imageVector = CategoryIcons.vectorAt(category.icon),
+                contentDescription = null,
+                tint = CategoryPalette.colorAt(category.colorIndex),
+                modifier = Modifier.size(18.dp),
+            )
+        },
+    )
 }

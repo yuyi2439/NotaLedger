@@ -13,6 +13,12 @@ import org.junit.Test
  */
 class CalculatorTest {
 
+    @Test
+    fun `decimal half cents round consistently with storage`() {
+        assertEquals(1.01, CalculatorState("1.005").value, 0.0)
+        assertEquals("2.68", CalculatorState.format(2.675))
+    }
+
     private fun digits(state: CalculatorState, text: String): CalculatorState {
         var s = state
         text.forEach { ch ->

@@ -1,38 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Adaptive icon background: flat teal plate.
+    Adaptive icon background: a flat white plate.
 
-    Colours come from the app's real Compose palette (ui/theme/Theme.kt):
-    primary teal 0xFF00695C, deepened to 0xFF00453B at the lower right so the
-    plate has a little depth without turning glossy. The full 108x108 canvas is
-    painted, so every launcher mask (circle, squircle, rounded square) crops to a
-    clean edge.
+    This used to be a teal gradient (0xFF00897B -> 0xFF00453B). At launcher sizes
+    that read as a muddy grey-green field, and it fought the yuan mark on top of
+    it: below 96px the plate, the page and the amber mark all turned into one dark
+    blob. The colour now lives in the mark, and the plate stays out of the way.
+
+    Pure white, not a near-white: a subtle gradient or a warm tint on white just
+    looks like a dirty screen, and the point of the white plate is that the mark
+    has the maximum contrast to sit on. The full 108x108 canvas is painted, so
+    every launcher mask (circle, squircle, rounded square) crops to a clean edge.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <path android:pathData="M0,0h108v108h-108z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="linear"
-                android:startX="0"
-                android:startY="0"
-                android:endX="108"
-                android:endY="108">
-                <item
-                    android:color="#FF00897B"
-                    android:offset="0.0" />
-                <item
-                    android:color="#FF00695C"
-                    android:offset="0.5" />
-                <item
-                    android:color="#FF00453B"
-                    android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M0,0h108v108h-108z" />
 </vector>

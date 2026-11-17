@@ -26,12 +26,17 @@ enum class Kind(val code: Int) {
 
 @Entity(
     tableName = "categories",
-    indices = [Index(value = ["name", "kind"], unique = true)],
+    indices = [
+        // Sibling names are unique. A top-level category stores ROOT rather than
+        // null in parentId, which is what lets one index cover both levels.
+        Index(value = ["name", "kind", "parentId"], unique = true),
+        Index("parentId"),
+    ],
 )
 data class Category(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val name: String,
-    /** The user's own categories can be deleted; the seeded ones can be hidden instead. */
+    /** Expense or income. A sub-category always shares its parent's kind. */
     val kind: Int,
     /**
      * Stable id from [cn.yausen.notaledger.ui.components.CategoryIcons]; an index
@@ -39,10 +44,28 @@ data class Category(
      */
     val icon: Int,
     val colorIndex: Int,
-    /** Built-in categories are always available and cannot be deleted. */
-    val builtIn: Boolean = false,
+    /**
+     * Parent category id, or [ROOT] when this is a top-level category. There are
+     * only two levels, so a parent is always itself top-level.
+     */
+    val parentId: Long = ROOT,
+    /**
+     * One of the categories seeded on first launch. The flag only earns the row a
+     * "默认" label: a default category can be renamed, restyled, moved between
+     * levels and deleted exactly like a hand-made one, and deleting it does not
+     * bring it back.
+     */
+    val isDefault: Boolean = false,
     val sortOrder: Int = 0,
-)
+) {
+    /** Only a top-level category can carry sub-categories. */
+    val isTopLevel: Boolean get() = parentId == ROOT
+
+    companion object {
+        /** Sentinel for [parentId]: no parent, so this is a top-level category. */
+        const val ROOT = 0L
+    }
+}
 
 @Entity(
     tableName = "transactions",
@@ -51,13 +74,16 @@ data class Category(
 data class Transaction(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     /** Always a positive magnitude; [kind] decides the sign. */
-    val amount: Double,
+    val amountCents: Long,
     val kind: Int,
     val categoryId: Long,
     val note: String = "",
     /** Epoch millis of when the money moved; drives ordering and grouping. */
     val timestamp: Long,
-)
+) {
+    @get:androidx.room.Ignore
+    val amount: Double get() = amountCents / 100.0
+}
 
 /** Category totals for the pie chart. */
 data class CategoryTotal(
@@ -92,15 +118,15 @@ interface LedgerDao {
 
     @Query(
         """
-        SELECT IFNULL(SUM(amount), 0) FROM transactions
+        SELECT IFNULL(SUM(amountCents), 0) FROM transactions
         WHERE kind = :kind AND timestamp BETWEEN :start AND :end
         """,
     )
-    fun observeSum(kind: Int, start: Long, end: Long): Flow<Double>
+    fun observeSum(kind: Int, start: Long, end: Long): Flow<Long>
 
     @Query(
         """
-        SELECT categoryId AS categoryId, SUM(amount) AS total, COUNT(*) AS count
+        SELECT categoryId AS categoryId, SUM(amountCents) / 100.0 AS total, COUNT(*) AS count
         FROM transactions
         WHERE kind = :kind AND timestamp BETWEEN :start AND :end
         GROUP BY categoryId
@@ -112,7 +138,7 @@ interface LedgerDao {
     @Query(
         """
         SELECT strftime('%Y-%m-%d', timestamp / 1000, 'unixepoch', 'localtime') AS day,
-               SUM(amount) AS total
+               SUM(amountCents) / 100.0 AS total
         FROM transactions
         WHERE kind = :kind AND timestamp BETWEEN :start AND :end
         GROUP BY day
@@ -125,7 +151,7 @@ interface LedgerDao {
     @Query(
         """
         SELECT strftime('%Y-%m', timestamp / 1000, 'unixepoch', 'localtime') AS day,
-               SUM(amount) AS total
+               SUM(amountCents) / 100.0 AS total
         FROM transactions
         WHERE kind = :kind AND timestamp BETWEEN :start AND :end
         GROUP BY day
@@ -149,17 +175,30 @@ interface LedgerDao {
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun deleteById(id: Long)
 
-    @Query("SELECT * FROM categories ORDER BY kind ASC, sortOrder ASC, id ASC")
+    /**
+     * Every category in one list. Top-level rows come first within a kind and the
+     * sub-categories follow grouped by their parent, so the caller rebuilds the
+     * tree in a single pass instead of querying per parent.
+     */
+    @Query("SELECT * FROM categories ORDER BY kind ASC, parentId ASC, sortOrder ASC, id ASC")
     fun observeCategories(): Flow<List<Category>>
 
     @Query("SELECT * FROM categories WHERE id = :id")
     suspend fun findCategory(id: Long): Category?
 
-    @Query("SELECT COUNT(*) FROM categories WHERE kind = :kind")
-    suspend fun countCategories(kind: Int): Int
+    /** Sub-categories of one top-level category, in the order the user arranged them. */
+    @Query("SELECT * FROM categories WHERE parentId = :parentId ORDER BY sortOrder ASC, id ASC")
+    suspend fun childrenOf(parentId: Long): List<Category>
 
-    @Query("SELECT COUNT(*) FROM transactions WHERE categoryId = :categoryId")
-    suspend fun countTransactionsInCategory(categoryId: Long): Int
+    @Query("SELECT COUNT(*) FROM categories")
+    suspend fun countCategories(): Int
+
+    /**
+     * Records across a whole subtree. The caller always passes at least the
+     * category itself, because SQLite rejects an empty `IN ()` list.
+     */
+    @Query("SELECT COUNT(*) FROM transactions WHERE categoryId IN (:categoryIds)")
+    suspend fun countTransactionsInCategories(categoryIds: List<Long>): Int
 
     @Insert
     suspend fun insertCategory(category: Category): Long
@@ -169,12 +208,15 @@ interface LedgerDao {
 
     @Delete
     suspend fun deleteCategory(category: Category)
+
+    @Query("DELETE FROM categories WHERE parentId = :parentId")
+    suspend fun deleteChildren(parentId: Long)
 }
 
 @Database(
     entities = [Category::class, Transaction::class],
-    version = 2,
-    exportSchema = false,
+    version = 3,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -191,10 +233,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "notaledger-ledger.db",
                 )
-                    // Schema v2 stores category icons as ids instead of emoji text.
-                    // Built-in categories are re-seeded on next launch, so a rebuild
-                    // is cheaper and safer than carrying a migration for seed data.
-                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .addMigrations(LedgerMigrations.FROM_1, LedgerMigrations.FROM_2)
                     .build()
                     .also { instance = it }
             }
@@ -228,34 +267,30 @@ object DefaultCategories {
         Seed("其他收入", CategoryIcons.LOCAL_ATM, 6),
     )
 
-    suspend fun seedIfEmpty(dao: LedgerDao) {
-        if (dao.countCategories(Kind.EXPENSE.code) == 0) {
-            expense.forEachIndexed { index, seed ->
-                dao.insertCategory(
-                    Category(
-                        name = seed.name,
-                        kind = Kind.EXPENSE.code,
-                        icon = seed.iconKey,
-                        colorIndex = seed.color,
-                        builtIn = true,
-                        sortOrder = index,
-                    ),
-                )
-            }
-        }
-        if (dao.countCategories(Kind.INCOME.code) == 0) {
-            income.forEachIndexed { index, seed ->
-                dao.insertCategory(
-                    Category(
-                        name = seed.name,
-                        kind = Kind.INCOME.code,
-                        icon = seed.iconKey,
-                        colorIndex = seed.color,
-                        builtIn = true,
-                        sortOrder = index,
-                    ),
-                )
-            }
+    /**
+     * Writes the seed set. The caller owns the "already seeded" decision instead of
+     * this object asking whether the table is empty: these rows are deletable now, so
+     * a user who clears a list out would otherwise watch it grow back on the next
+     * launch.
+     */
+    suspend fun seed(dao: LedgerDao) {
+        insertAll(dao, Kind.EXPENSE.code, expense)
+        insertAll(dao, Kind.INCOME.code, income)
+    }
+
+    private suspend fun insertAll(dao: LedgerDao, kind: Int, seeds: List<Seed>) {
+        seeds.forEachIndexed { index, seed ->
+            dao.insertCategory(
+                Category(
+                    name = seed.name,
+                    kind = kind,
+                    icon = seed.iconKey,
+                    colorIndex = seed.color,
+                    parentId = Category.ROOT,
+                    isDefault = true,
+                    sortOrder = index,
+                ),
+            )
         }
     }
 }

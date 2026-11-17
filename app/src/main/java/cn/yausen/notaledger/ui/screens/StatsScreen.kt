@@ -43,6 +43,8 @@ import cn.yausen.notaledger.data.Category
 import cn.yausen.notaledger.data.CategoryTotal
 import cn.yausen.notaledger.data.DailyTotal
 import cn.yausen.notaledger.data.Kind
+import cn.yausen.notaledger.data.displayName
+import cn.yausen.notaledger.data.indexedById
 import cn.yausen.notaledger.ui.LedgerViewModel
 import cn.yausen.notaledger.ui.components.BarChart
 import cn.yausen.notaledger.ui.components.BarEntry
@@ -74,8 +76,10 @@ fun StatsScreen(viewModel: LedgerViewModel) {
     val trend by viewModel.monthlyTrend.collectAsState()
     val budget by viewModel.budget.collectAsState()
 
-    val categories = home.rows.mapNotNull { it.category }.distinctBy { it.id }
-    val byId = categories.associateBy { it.id }
+    // The whole category list, not just the ones in this month's rows: a
+    // sub-category needs its parent's name even when the parent was never used.
+    val categories = home.categories
+    val byId = categories.indexedById()
 
     var showBudgetDialog by remember { mutableStateOf(false) }
 
@@ -85,7 +89,7 @@ fun StatsScreen(viewModel: LedgerViewModel) {
     val totalAmount = totals.sumOf { it.total }
     val slices = totals.map { item ->
         ChartSlice(
-            label = byId[item.categoryId]?.name ?: "未分类",
+            label = categories.displayName(byId[item.categoryId]),
             value = item.total,
             color = CategoryPalette.colorAt(byId[item.categoryId]?.colorIndex ?: 0),
         )
@@ -126,6 +130,7 @@ fun StatsScreen(viewModel: LedgerViewModel) {
             item {
                 BreakdownCard(
                     totals = totals,
+                    categories = categories,
                     byId = byId,
                     slices = slices,
                     totalAmount = totalAmount,
@@ -188,6 +193,7 @@ fun StatsScreen(viewModel: LedgerViewModel) {
 @Composable
 private fun BreakdownCard(
     totals: List<CategoryTotal>,
+    categories: List<Category>,
     byId: Map<Long, Category>,
     slices: List<ChartSlice>,
     totalAmount: Double,
@@ -218,7 +224,7 @@ private fun BreakdownCard(
                     totals.take(5).forEach { item ->
                         val category = byId[item.categoryId]
                         LegendRow(
-                            label = category?.name ?: "未分类",
+                            label = categories.displayName(category),
                             value = Money.format(item.total),
                             share = if (totalAmount > 0) (item.total / totalAmount).toFloat() else 0f,
                             color = CategoryPalette.colorAt(category?.colorIndex ?: 0),

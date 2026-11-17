@@ -130,11 +130,11 @@ value class CalculatorState(val expression: String = "") {
 
         /** Money has two decimals; rounding each step keeps the sum exact in fen. */
         fun round(value: Double): Double =
-            BigDecimal(value).setScale(2, RoundingMode.HALF_UP).toDouble()
+            BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
 
         /** Trims meaningless zeros: 12.50 -> 12.5, 12.00 -> 12. */
         fun format(value: Double): String {
-            val rounded = BigDecimal(value).setScale(2, RoundingMode.HALF_UP)
+            val rounded = BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP)
             return rounded.stripTrailingZeros().toPlainString()
         }
 

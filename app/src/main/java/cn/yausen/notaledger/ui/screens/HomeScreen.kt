@@ -409,7 +409,7 @@ private fun TransactionRow(
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = row.category?.name ?: "未分类",
+                    text = row.categoryLabel,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium,
                 )
@@ -464,7 +464,7 @@ private fun TransactionActionSheet(
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = row.category?.name ?: "未分类",
+                        text = row.categoryLabel,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
